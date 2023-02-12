@@ -1,19 +1,22 @@
-# abi-guesser
+# ABI Guesser
 
-Guess the type for any ABI-encoded blob of data, such as call data, return data, or anything that was created with `abi.encode()`.
+This package allows you to take any ABI-encoded blob of data, such as calldata, return data, or anything else that can be parsed with `abi.decode()`, and reverse-engineer the types of the values inside that blob.
 
-Usage:
+Note that this package will not be able to guess the types for any data which was encoded in a non-standard manner.
+
+## Installation
 
 ```bash
-npm install https://github.com/samczsun/abi-guesser
-
-yarn add https://github.com/samczsun/abi-guesser
-
-pnpm install https://github.com/samczsun/abi-guesser
+npm i @openchainxyz/abi-guesser
 ```
 
-```javascript
-import { guessAbiEncodedData } from '@samczsun/abi-guesser/dist/encode-guesser';
+## Usage
 
-const types = guessAbiEncodedData(data);
+
+```javascript
+import { guessAbiEncodedData, guessFragment } from '@openchainxyz/abi-guesser'
+
+const paramTypes: ParamType[] = guessAbiEncodedData(calldata)!;
+
+const fragment: FunctionFragment = guessFragment(calldata)!;
 ```

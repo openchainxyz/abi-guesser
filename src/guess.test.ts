@@ -1,5 +1,4 @@
-import { defaultAbiCoder, FunctionFragment, ParamType } from '@ethersproject/abi';
-import { BigNumber, ethers } from 'ethers';
+import { FunctionFragment, Interface, ParamType } from 'ethers';
 import { guessFragment } from './guess';
 
 const jestConsole = console;
@@ -149,7 +148,7 @@ const handwrittenTestcases: HandwrittenTestcase[] = [
     },
     {
         name: 'array of tuple of array of tuple',
-        signature: 'func((string, (string, uint256)[])[])',
+        signature: 'func((string, (string, uint256[])[])[])',
         args: [
             [
                 [
@@ -222,10 +221,10 @@ const isParamDynamic = (param: ParamType): boolean => {
             return true;
         }
 
-        return isParamDynamic(param.arrayChildren);
+        return isParamDynamic(param.arrayChildren!);
     }
     if (param.baseType === 'tuple') {
-        return param.components.find(isParamDynamic) !== undefined;
+        return param.components!.find(isParamDynamic) !== undefined;
     }
     return false;
 };
@@ -239,23 +238,23 @@ const isParamDynamic = (param: ParamType): boolean => {
 //    ex: func((uint256,string,bytes)[],uint256) === func(string,uint256) if the first parameter has no children
 // 3) if there is a static array, it will look identical to the elemented repeated
 //    ex: func(uint256[3]) === func(uint256,uint256,uint256)
-const stripTypeInformation = (params: ParamType[], allArgs: any[][], isParentArray?: boolean): ParamType[] => {
+const stripTypeInformation = (params: readonly ParamType[], allArgs: any[][], isParentArray?: boolean): ParamType[] => {
     const strippedParams: ParamType[] = [];
     for (const [idx, param] of params.entries()) {
-        if (param.baseType === 'tuple') {
+        if (param.isTuple()) {
             const remappedComponents = stripTypeInformation(
                 param.components,
                 allArgs.map((args) => args[idx]),
             );
 
-            const shouldBeFlattened = param.components.find(isParamDynamic) === undefined;
+            const shouldBeFlattened = param.components!.find(isParamDynamic) === undefined;
             if (shouldBeFlattened && !isParentArray) {
                 // rule 1
                 strippedParams.push(...remappedComponents);
             } else {
                 strippedParams.push(ParamType.from(`(${remappedComponents.map((v) => v.format()).join(',')})`));
             }
-        } else if (param.baseType === 'array') {
+        } else if (param.isArray()) {
             if (param.arrayLength !== -1) {
                 // rule 3
                 for (let i = 0; i < param.arrayLength; i++) {
@@ -268,15 +267,16 @@ const stripTypeInformation = (params: ParamType[], allArgs: any[][], isParentArr
                     strippedParams.push(ParamType.from('()[]'));
                 } else {
                     const remappedChildren = stripTypeInformation(
-                        [param.arrayChildren],
-                        allArgs.flatMap((args) => args[idx]),
+                        Array(allArgs.length).fill(param.arrayChildren),
+                        allArgs.map((args) => args[idx]),
                         true,
                     )[0];
                     strippedParams.push(ParamType.from(`${remappedChildren.format()}[]`));
                 }
             }
         } else if (param.baseType === 'bytes' || param.baseType === 'string') {
-            const anyArgsHaveElements = allArgs.find((args) => args[idx].length > 0) !== undefined;
+            const anyArgsHaveElements =
+                allArgs.find((args) => args[idx].length > (param.baseType === 'bytes' ? 2 : 0)) !== undefined;
             if (!anyArgsHaveElements) {
                 // rule 2
                 strippedParams.push(ParamType.from('()[]'));
@@ -303,7 +303,7 @@ const isEqual = (expectedFragment: FunctionFragment, actualFragment: FunctionFra
         return type;
     };
 
-    const compareParams = (left: ParamType[], right: ParamType[]) => {
+    const compareParams = (left: readonly ParamType[], right: readonly ParamType[]) => {
         if (left.length !== right.length) {
             throw new Error(
                 `${left.length} != ${right.length} (${left.map((v) => v.format()).join(',')} != ${right
@@ -325,13 +325,13 @@ const isEqual = (expectedFragment: FunctionFragment, actualFragment: FunctionFra
                     throw new Error(`${leftChild.arrayLength} != ${rightChild.arrayLength}`);
                 }
 
-                compareParams([leftChild.arrayChildren], [rightChild.arrayChildren]);
+                compareParams([leftChild.arrayChildren!], [rightChild.arrayChildren!]);
             } else if (leftChild.baseType === 'tuple') {
                 if (leftChild.baseType !== rightChild.baseType) {
                     throw new Error(`${leftChild.baseType} != ${rightChild.baseType}`);
                 }
 
-                compareParams(leftChild.components, rightChild.components);
+                compareParams(leftChild.components!, rightChild.components!);
             } else {
                 const leftType = normalize(leftChild.type);
                 const rightType = normalize(rightChild.type);
@@ -343,14 +343,14 @@ const isEqual = (expectedFragment: FunctionFragment, actualFragment: FunctionFra
         }
     };
 
-    compareParams(expectedFragment.inputs, actualFragment.inputs);
+    compareParams(expectedFragment.inputs!, actualFragment.inputs);
 };
 
 describe('guess', () => {
     handwrittenTestcases.forEach((testcase) => {
         it('should be able to guess ' + testcase.name + ': ' + testcase.signature, async () => {
             const fragment = FunctionFragment.from(testcase.signature);
-            const abi = new ethers.utils.Interface([fragment]);
+            const abi = new Interface([fragment]);
             const data = abi.encodeFunctionData(fragment, testcase.args);
 
             const guessed = guessFragment(data);
@@ -358,13 +358,13 @@ describe('guess', () => {
                 throw new Error('failed to parse');
             }
 
+            console.log('guessed function ', guessed.format());
             const strippedFragment = FunctionFragment.from(
-                `${fragment.name}(${stripTypeInformation(fragment.inputs, [testcase.args])
+                `${fragment.name}(${stripTypeInformation(fragment.inputs!, [testcase.args])
                     .map((v) => v.format())
                     .join(',')})`,
             );
             console.log('expected function', strippedFragment.format());
-            console.log('guessed function ', guessed.format());
             try {
                 isEqual(strippedFragment, guessed);
             } catch (e) {
@@ -376,13 +376,14 @@ describe('guess', () => {
     chainTestcases.forEach((testcase) => {
         it('should work on ' + testcase.id, async () => {
             const fragment = FunctionFragment.from(testcase.signature);
-            const abi = new ethers.utils.Interface([fragment]);
+            const abi = new Interface([fragment]);
 
             const guessed = guessFragment(testcase.calldata);
             if (!guessed) {
                 throw new Error('failed to parse');
             }
 
+            console.log('guessed function ', guessed.format());
             const strippedFragment = FunctionFragment.from(
                 `${fragment.name}(${stripTypeInformation(fragment.inputs, [
                     abi.decodeFunctionData(fragment, testcase.calldata).map((v) => v),
@@ -391,7 +392,6 @@ describe('guess', () => {
                     .join(',')})`,
             );
             console.log('expected function', strippedFragment.format());
-            console.log('guessed function ', guessed.format());
             try {
                 isEqual(strippedFragment, guessed);
             } catch (e) {

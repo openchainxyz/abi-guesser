@@ -1,9 +1,40 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.guessFragment = exports.guessAbiEncodedData = void 0;
-const abi_1 = require("@ethersproject/abi");
-const lib_1 = require("@ethersproject/abi/lib");
-const utils_1 = require("ethers/lib/utils");
+const ethers_1 = require("ethers");
+const decodeHex = (data) => {
+    if (data instanceof Uint8Array)
+        return data;
+    if (data.startsWith('0x')) {
+        data = data.substring(2);
+    }
+    if (!/^([0-9a-fA-F]{2})*$/.test(data)) {
+        throw new Error('invalid hex input');
+    }
+    const result = new Uint8Array(data.length / 2);
+    for (let i = 0; i < result.length; i++)
+        result[i] = parseInt(data.substring(i * 2, i * 2 + 2), 16);
+    return result;
+};
+const encodeHex = (() => {
+    const lut = new Array(0x100);
+    for (let i = 0; i < 0x100; i++)
+        lut[i] = i.toString(16).padStart(2, '0');
+    return (data) => {
+        const result = new Array(data.length);
+        for (let i = 0; i < data.length; i++)
+            result[i] = lut[data[i]];
+        return '0x' + result.join('');
+    };
+})();
+const decodeAbiData = (types, data) => {
+    const decoded = ethers_1.AbiCoder.defaultAbiCoder().decode(types, data);
+    // make an array because the Result type from ethers is annoying
+    const result = new Array(types.length);
+    for (let i = 0; i < decoded.length; i++)
+        result[i] = decoded[i];
+    return result;
+};
 // check if a given bigint can safely be represented in a number
 const isSafeNumber = (val) => {
     return val < BigInt(Number.MAX_SAFE_INTEGER);
@@ -14,7 +45,7 @@ const tryParseOffset = (data, pos) => {
     const word = data.slice(pos, pos + 32);
     if (word.length === 0)
         return null;
-    const bigOffset = BigInt((0, utils_1.hexlify)(word));
+    const bigOffset = BigInt(encodeHex(word));
     // can't be huge
     if (!isSafeNumber(bigOffset))
         return null;
@@ -33,7 +64,7 @@ const tryParseLength = (data, offset) => {
     const word = data.slice(offset, offset + 32);
     if (word.length === 0)
         return null;
-    const bigLength = BigInt((0, utils_1.hexlify)(word));
+    const bigLength = BigInt(encodeHex(word));
     // can't be huge
     if (!isSafeNumber(bigLength))
         return null;
@@ -76,8 +107,7 @@ const countTrailingZeros = (arr) => {
 };
 // pretty print the potential param
 const formatParam = (p) => {
-    // if (p === undefined) return 'undefined';
-    if (abi_1.ParamType.isParamType(p)) {
+    if (ethers_1.ParamType.isParamType(p)) {
         return p.format();
     }
     return `dynamic(offset=${p.offset},len=${p.length})`;
@@ -119,7 +149,7 @@ isDynamicArrayElement) => {
         if (!params)
             return false;
         try {
-            abi_1.defaultAbiCoder.decode(params, data).map((v) => v.toString());
+            decodeAbiData(params, data);
             return true;
         }
         catch (e) {
@@ -130,7 +160,7 @@ isDynamicArrayElement) => {
     // if (paramIdx === 0) {
     //     debug('backtracking');
     //     debug('input:');
-    //     chunkString(hexlify(data).substring(2), 64)
+    //     chunkString(encodeToHex(data).substring(2), 64)
     //         .forEach((v, i) =>
     //             debug('  ' + i.toString(16) + ' => ' + v),
     //         );
@@ -161,7 +191,7 @@ isDynamicArrayElement) => {
         if (isDynamicArrayElement !== null) {
             return null;
         }
-        const fragment = decodeWellFormedTuple(depth, data, paramIdx + 1, [...collectedParams, abi_1.ParamType.from('bytes32')], endOfStaticCalldata, expectedLength, isDynamicArrayElement);
+        const fragment = decodeWellFormedTuple(depth, data, paramIdx + 1, [...collectedParams, ethers_1.ParamType.from('bytes32')], endOfStaticCalldata, expectedLength, isDynamicArrayElement);
         if (testParams(fragment)) {
             return fragment;
         }
@@ -175,10 +205,10 @@ isDynamicArrayElement) => {
     }
     const maybeResolveDynamicParam = (idx) => {
         const param = collectedParams[idx];
-        if (abi_1.ParamType.isParamType(param)) {
+        if (ethers_1.ParamType.isParamType(param)) {
             return param;
         }
-        const nextDynamicParam = collectedParams.find((v, i) => i > idx && !abi_1.ParamType.isParamType(v));
+        const nextDynamicParam = collectedParams.find((v, i) => i > idx && !ethers_1.ParamType.isParamType(v));
         const isTrailingDynamicParam = nextDynamicParam === undefined;
         // note that the length of the array != the number of bytes (bytes vs uint[])
         const maybeDynamicElementLen = param.length;
@@ -197,7 +227,7 @@ isDynamicArrayElement) => {
             if (params === null) {
                 return undefined;
             }
-            return abi_1.ParamType.from(`(${formatParams(params)})`);
+            return ethers_1.ParamType.from(`(${formatParams(params)})`);
         }
         if (maybeDynamicElementLen === 0) {
             // if the element declared zero length, return a sentinel value
@@ -205,7 +235,7 @@ isDynamicArrayElement) => {
             // - empty string/bytes
             // - empty dynamic array
             // we can't distinguish between the two, so return the special marker
-            return abi_1.ParamType.from('()[]');
+            return ethers_1.ParamType.from('()[]');
         }
         if (maybeDynamicElementLen === dynamicData.length ||
             (dynamicData.length % 32 === 0 &&
@@ -213,7 +243,7 @@ isDynamicArrayElement) => {
             // if either condition is true, then this must be a bytestring:
             // - has exactly the same number of bytes as it claims in the length
             // - is right-padded with zeroes to the next word
-            return abi_1.ParamType.from('bytes');
+            return ethers_1.ParamType.from('bytes');
         }
         // from here on out it gets a bit ambiguous
         // we track all possible results and pick the best one at the end
@@ -257,7 +287,7 @@ isDynamicArrayElement) => {
                 }
                 if (params.length > 1) {
                     // multiple types, wrap it in a tuple
-                    staticParseParams.push(abi_1.ParamType.from(`(${formatParams(params)})`));
+                    staticParseParams.push(ethers_1.ParamType.from(`(${formatParams(params)})`));
                 }
                 else {
                     // one type, all good
@@ -278,7 +308,7 @@ isDynamicArrayElement) => {
             return undefined;
         }
         debug('got valid results', validResults.map((v) => v.format()).join(' / '));
-        return abi_1.ParamType.from(`${validResults[0].format()}[]`);
+        return ethers_1.ParamType.from(`${validResults[0].format()}[]`);
     };
     const finalParams = [];
     for (let i = 0; i < collectedParams.length; i++) {
@@ -295,103 +325,122 @@ isDynamicArrayElement) => {
     }
     return null;
 };
+// given an array of types, try to find the greatest common denominator between them all
+const mergeTypes = (types) => {
+    if (types.length === 0) {
+        // nothing to do
+        return ethers_1.ParamType.from('()');
+    }
+    if (types.length === 1) {
+        return types[0];
+    }
+    const baseTypeChecker = new Set(types.map((v) => v.baseType));
+    if (baseTypeChecker.size === 1) {
+        const baseType = baseTypeChecker.values().next().value;
+        if (baseType === 'tuple') {
+            const componentTypes = [];
+            for (let i = 0; i < types.length; i++) {
+                const type = types[i];
+                if (!type.isTuple())
+                    throw new Error('unexpected');
+                componentTypes.push(type.components);
+            }
+            const componentLengthChecker = new Set(componentTypes.map((v) => v.length));
+            if (componentLengthChecker.size !== 1) {
+                // inconsistent
+                return ethers_1.ParamType.from('()');
+            }
+            const componentLength = componentLengthChecker.values().next().value;
+            const mergedTypes = [];
+            for (let i = 0; i < componentLength; i++) {
+                mergedTypes.push(mergeTypes(componentTypes.map((v) => v[i])));
+            }
+            return ethers_1.ParamType.from(`(${formatParams(mergedTypes)})`);
+        }
+        if (baseType === 'array') {
+            const childrenTypes = [];
+            for (let i = 0; i < types.length; i++) {
+                const type = types[i];
+                if (!type.isArray())
+                    throw new Error('unexpected');
+                childrenTypes.push(type.arrayChildren);
+            }
+            return ethers_1.ParamType.from(`${mergeTypes(childrenTypes).format()}[]`);
+        }
+    }
+    const typeChecker = new Set(types.map((v) => v.type));
+    if (typeChecker.size === 1) {
+        return types[0];
+    }
+    if (typeChecker.has('bytes')) {
+        return ethers_1.ParamType.from('bytes');
+    }
+    if (typeChecker.has('uint256')) {
+        return ethers_1.ParamType.from('uint256');
+    }
+    return ethers_1.ParamType.from('bytes32');
+};
+// given an array of basic types (only bytes32, bytes, arrays, and tuples allowed) and a list of values,
+// try and find the most concrete types acceptable. for example, a bytes32 might be inferred as a uint16 or a bytes4
+const inferTypes = (params, vals) => {
+    return params.map((param, idx) => {
+        const val = vals[idx];
+        if (param.isTuple()) {
+            return ethers_1.ParamType.from(`(${formatParams(inferTypes(param.components, val))})`);
+        }
+        if (param.isArray()) {
+            const repeatChildTypes = Array(val.length).fill(param.arrayChildren);
+            return ethers_1.ParamType.from(`${mergeTypes(inferTypes(repeatChildTypes, val)).format()}[]`);
+        }
+        if (param.type === 'bytes32') {
+            const leadingZeros = countLeadingZeros(decodeHex(val));
+            const trailingZeros = countTrailingZeros(decodeHex(val));
+            if (leadingZeros >= 12 && leadingZeros <= 17) {
+                // it's probably very hard to mine more leading zeros than that
+                return ethers_1.ParamType.from('address');
+            }
+            if (leadingZeros > 16) {
+                return ethers_1.ParamType.from('uint256');
+            }
+            if (trailingZeros > 0) {
+                return ethers_1.ParamType.from(`bytes${32 - trailingZeros}`);
+            }
+            return ethers_1.ParamType.from('bytes32');
+        }
+        if (param.type === 'bytes') {
+            try {
+                new TextDecoder('utf-8', { fatal: true }).decode(decodeHex(val));
+                return ethers_1.ParamType.from('string');
+            }
+            catch (_a) { }
+            return ethers_1.ParamType.from('bytes');
+        }
+        return param;
+    });
+};
 /*
 assume the calldata is "well-formed". by well-formed, we mean that all the static parameters come first,
 then all the dynamic parameters come after. we assume there is no overlaps in dynamic parameters
 and all trailing zeros are explicitly specified
  */
 const guessAbiEncodedData = (bytes) => {
-    const params = decodeWellFormedTuple(0, (0, utils_1.arrayify)(bytes), 0, [], bytes.length, null, null);
+    const data = decodeHex(bytes);
+    const params = decodeWellFormedTuple(0, data, 0, [], data.length, null, null);
     if (!params) {
         return null;
     }
-    // let's clean it up
-    const mergeTypes = (types) => {
-        if (types.length === 0) {
-            return abi_1.ParamType.from('()');
-        }
-        if (types.find((v) => v.baseType === 'tuple') !== undefined) {
-            const componentTypes = [];
-            for (let i = 0; i < types[0].components.length; i++) {
-                componentTypes.push(mergeTypes(Array.from(Array(types.length).keys()).map((v) => types[v].components[i])));
-            }
-            return abi_1.ParamType.from(`(${componentTypes.map((v) => v.format()).join(',')})`);
-        }
-        if (types.find((v) => v.baseType === 'array') !== undefined) {
-            return abi_1.ParamType.from(`${mergeTypes(types.map((v) => v.arrayChildren)).format()}[]`);
-        }
-        const set = new Set(types.map((v) => v.format()));
-        if (set.size === 1) {
-            return types[0];
-        }
-        else {
-            if (set.has('bytes')) {
-                return abi_1.ParamType.from('bytes');
-            }
-            else if (set.has('uint256')) {
-                return abi_1.ParamType.from('uint256');
-            }
-            else {
-                return abi_1.ParamType.from('bytes32');
-            }
-        }
-    };
-    const prettyTypes = (params, vals) => {
-        return params.map((param, idx) => {
-            const val = vals[idx];
-            if (param.type === 'bytes32') {
-                const leadingZeros = countLeadingZeros((0, utils_1.arrayify)(val));
-                const trailingZeros = countTrailingZeros((0, utils_1.arrayify)(val));
-                if (leadingZeros >= 12 && leadingZeros <= 17) {
-                    // it's probably very hard to mine more leading zeros than that
-                    return abi_1.ParamType.from('address');
-                }
-                else if (leadingZeros > 16) {
-                    return abi_1.ParamType.from('uint256');
-                }
-                else if (trailingZeros > 0) {
-                    return abi_1.ParamType.from(`bytes${32 - trailingZeros}`);
-                }
-                else {
-                    return abi_1.ParamType.from('bytes32');
-                }
-            }
-            else if (param.type === 'bytes') {
-                try {
-                    (0, utils_1.toUtf8String)(val);
-                    return abi_1.ParamType.from('string');
-                }
-                catch (_a) {
-                    return abi_1.ParamType.from('bytes');
-                }
-            }
-            else if (param.baseType === 'array') {
-                const childrenTypes = val.map((child) => prettyTypes([param.arrayChildren], [child])[0]);
-                return abi_1.ParamType.from(`${mergeTypes(childrenTypes).format()}[]`);
-            }
-            else if (param.baseType === 'tuple') {
-                return abi_1.ParamType.from(`(${prettyTypes(param.components, val)
-                    .map((v) => v.format())
-                    .join(',')})`);
-            }
-            else {
-                return param;
-            }
-        });
-    };
-    return prettyTypes(params, Array.from(abi_1.defaultAbiCoder.decode(params, bytes)));
+    return inferTypes(params, decodeAbiData(params, data));
 };
 exports.guessAbiEncodedData = guessAbiEncodedData;
 const guessFragment = (calldata) => {
-    const bytes = (0, utils_1.arrayify)(calldata);
+    const bytes = decodeHex(calldata);
     if (bytes.length === 0)
         return null;
-    const tupleData = bytes.slice(4);
-    const params = (0, exports.guessAbiEncodedData)(tupleData);
+    const params = (0, exports.guessAbiEncodedData)(bytes.slice(4));
     if (!params) {
         return null;
     }
-    const selector = (0, utils_1.hexlify)(bytes.slice(0, 4)).substring(2);
-    return lib_1.FunctionFragment.from(`guessed_${selector}(${formatParams(params)})`);
+    const selector = encodeHex(bytes.slice(0, 4)).substring(2);
+    return ethers_1.FunctionFragment.from(`guessed_${selector}(${formatParams(params)})`);
 };
 exports.guessFragment = guessFragment;
