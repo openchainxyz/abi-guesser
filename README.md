@@ -12,7 +12,6 @@ npm i @openchainxyz/abi-guesser
 
 ## Usage
 
-
 ```javascript
 import { guessAbiEncodedData, guessFragment } from '@openchainxyz/abi-guesser'
 

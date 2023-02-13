@@ -143,18 +143,18 @@ const generateConsistentResult = (params: ParamType[]): ParamType | null => {
 
     // console.log("generating consistent result");
     // params.forEach(v => console.log("  " + v.format()));
-    
+
     if (params[0].isTuple() && params[0].components.length > 0) {
-        if (params.find(v => !v.isTuple()) !== undefined) return null;
+        if (params.find((v) => !v.isTuple()) !== undefined) return null;
 
         // todo: is this wrong?
-        if (new Set(params.map(v => v.components!.length)).size !== 1) return null;
+        if (new Set(params.map((v) => v.components!.length)).size !== 1) return null;
 
         const components = [];
         for (let i = 0; i < params[0].components.length; i++) {
-            const component = generateConsistentResult(params.map(v => v.components![i]));
+            const component = generateConsistentResult(params.map((v) => v.components![i]));
             if (!component) return null;
-            
+
             components.push(component);
         }
 
@@ -162,14 +162,14 @@ const generateConsistentResult = (params: ParamType[]): ParamType | null => {
     }
 
     if (params[0].isArray()) {
-        if (params.find(v => !v.isArray()) !== undefined) return null;
+        if (params.find((v) => !v.isArray()) !== undefined) return null;
 
-        const arrayChildren = generateConsistentResult(params.map(v => v.arrayChildren!));
+        const arrayChildren = generateConsistentResult(params.map((v) => v.arrayChildren!));
         if (!arrayChildren) return null;
 
         return ParamType.from(`${arrayChildren.format()}[]`);
     }
-    
+
     const consistencyChecker = new Set<string>();
     for (const param of params) {
         let v = param.format();
@@ -363,7 +363,8 @@ const decodeWellFormedTuple = (
         if (
             maybeDynamicElementLen === dynamicData.length ||
             (dynamicData.length % 32 === 0 &&
-                maybeDynamicElementLen === dynamicData.length - countTrailingZeros(dynamicData))
+                dynamicData.length - maybeDynamicElementLen < 32 &&
+                dynamicData.slice(maybeDynamicElementLen).filter((v) => v !== 0).length === 0)
         ) {
             // if either condition is true, then this must be a bytestring:
             // - has exactly the same number of bytes as it claims in the length
