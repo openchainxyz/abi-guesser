@@ -138,13 +138,48 @@ const formatParams = (params: ParamType[]): string => {
     return `${params.map((v) => v.format()).join(',')}`;
 };
 
-const areParamsConsistent = (params: ParamType[]): boolean => {
-    const consistencyChecker = new Set<string>();
-    for (const param of params) {
-        consistencyChecker.add(param.format());
+const generateConsistentResult = (params: ParamType[]): ParamType | null => {
+    if (params.length === 0) return null;
+
+    // console.log("generating consistent result");
+    // params.forEach(v => console.log("  " + v.format()));
+    
+    if (params[0].isTuple() && params[0].components.length > 0) {
+        if (params.find(v => !v.isTuple()) !== undefined) return null;
+
+        // todo: is this wrong?
+        if (new Set(params.map(v => v.components!.length)).size !== 1) return null;
+
+        const components = [];
+        for (let i = 0; i < params[0].components.length; i++) {
+            const component = generateConsistentResult(params.map(v => v.components![i]));
+            if (!component) return null;
+            
+            components.push(component);
+        }
+
+        return ParamType.from(`(${formatParams(components)})`);
     }
 
-    return consistencyChecker.size === 1;
+    if (params[0].isArray()) {
+        if (params.find(v => !v.isArray()) !== undefined) return null;
+
+        const arrayChildren = generateConsistentResult(params.map(v => v.arrayChildren!));
+        if (!arrayChildren) return null;
+
+        return ParamType.from(`${arrayChildren.format()}[]`);
+    }
+    
+    const consistencyChecker = new Set<string>();
+    for (const param of params) {
+        let v = param.format();
+        if (v === '()[]') v = 'bytes';
+        consistencyChecker.add(v);
+    }
+
+    if (consistencyChecker.size !== 1) return null;
+
+    return ParamType.from(consistencyChecker.values().next().value);
 };
 
 // represents a placeholder for a potential dynamic variable
@@ -388,8 +423,8 @@ const decodeWellFormedTuple = (
 
             if (numWords % maybeDynamicElementLen !== 0 && !isTrailingDynamicParam) {
                 // only the trailing param may be right padded
-                debug('fail: got uneven dynamic data', dynamicData.length / 32, maybeDynamicElementLen);
-                return undefined;
+                // debug('fail: got uneven dynamic data', 'numWords=' + numWords, 'maybeLength=' + maybeDynamicElementLen);
+                // return undefined;
             }
 
             const staticParseParams: ParamType[] = [];
@@ -421,10 +456,10 @@ const decodeWellFormedTuple = (
         }
 
         const validResults = allResults
-            // we only want results that are consistent
-            .filter((results) => areParamsConsistent(results))
-            // only care about the first if all are consistent
-            .map((v) => v[0])
+            // find a consistent result
+            .map((results) => generateConsistentResult(results))
+            // filter out things that were not consistent or useless
+            .filter((v): v is ParamType => v !== null && v.format() !== '()[]')
             // how do we know which one is best? usually shorter is better (less complex)
             .sort((a, b) => a.format().length - b.format().length);
 
@@ -439,6 +474,7 @@ const decodeWellFormedTuple = (
 
     const finalParams: ParamType[] = [];
     for (let i = 0; i < collectedParams.length; i++) {
+        debug('resolving param', i);
         const decoded = maybeResolveDynamicParam(i);
         if (!decoded) {
             debug('fail: could not resolve param', i);
@@ -448,12 +484,11 @@ const decodeWellFormedTuple = (
         finalParams.push(decoded);
     }
 
-    debug('resolved params', finalParams.map(formatParam));
+    const valid = testParams(finalParams);
 
-    if (testParams(finalParams)) {
-        return finalParams;
-    }
-    return null;
+    debug('resolved params', finalParams.map(formatParam), valid);
+
+    return valid ? finalParams : null;
 };
 
 // given an array of types, try to find the greatest common denominator between them all

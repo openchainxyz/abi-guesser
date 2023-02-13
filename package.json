@@ -1,11 +1,11 @@
 {
     "name": "@openchainxyz/abi-guesser",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "description": "A package for guessing the types for ABI-encoded data",
     "main": "index.js",
     "scripts": {
-        "build": "rm -rf dist && tsc --project tsconfig.build.json",
-        "release": "pnpm build && cp package.json dist && cd dist && pnpm publish",
+        "build": "rm -rf dist && tsc --project tsconfig.build.json && cp package.json dist",
+        "release": "pnpm build && cd dist && pnpm publish",
         "test": "jest",
         "pretty": "prettier --write ."
     },
